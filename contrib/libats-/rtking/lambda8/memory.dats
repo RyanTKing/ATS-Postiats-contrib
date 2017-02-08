@@ -17,23 +17,26 @@ staload "./lambda8.sats"
 
 (* ****** ****** *)
 
+macdef i2b(i) = g0int2uint<intknd,uint8knd>(,(i))
+macdef b0 = i2b(0)
+
 // 16 CPU Registers
-val V = arrayref_make_elt<byte>(i2sz(16), i2byte(0)): arrayref(byte, num_regs)
+val V = arrayref_make_elt<c8_byte>(i2sz(NUM_REGS), b0): arrayref(c8_byte, num_regs)
 
 // Address Register
-val I = ref<word>(i2w(0)) : ref(word)
+val I = ref<c8_addr>(0) : ref(c8_addr)
 
 // Program Counter
-val pc = ref<intLt(mem_size)>(0) : ref(intLt(mem_size))
+val pc = ref<c8_addr>(PC_START) : ref(c8_addr)
 
 // Main memory
-val memory = arrayref_make_elt<byte>(
+val memory = arrayref_make_elt<c8_byte>(
   i2sz(MEM_SIZE),
-  i2byte(0)
-) : arrayref(byte, mem_size)
+  b0
+) : arrayref(c8_byte, mem_size)
 
 // The Stack
-val stack = ref(nil) : ref(list(intLt(mem_size), 0))
+val stack = ref(nil) : ref(list(c8_addr, 0))
 
 // Representation of the Screen
 val scr = matrixref_make_elt<int>(
@@ -43,10 +46,10 @@ val scr = matrixref_make_elt<int>(
 ) : matrixref(int, scr_height, scr_width)
 
 // Delay  Timer
-val delay_timer = ref<uint>(i2u(0)) : ref(uint)
+val delay_timer = ref<int>(0) : ref(int)
 
 // Sound Timer
-val sound_timer = ref<uint>(i2u(0)) : ref(uint)
+val sound_timer = ref<int>(0) : ref(int)
 
 // Keys
 val keys = arrayref_make_elt<bool>(
@@ -69,45 +72,32 @@ val chip8_font = (arrszref)$arrpsz{int}(
 
 fn{a:t0p} clear_array{n:nat}(arr: arrayref(a, n), init: a, n: int(n)): void =
   loop(0) where {
-    fun loop{m:nat; m <= n}.<n-m>.(i: int(m)):<cloref1> void =
+    fun loop{m:nat; m <= n}.<n-m>.(i: int(m)): void =
       if i < n then (arr[i] := init; loop(i + 1))
   }
 
 (* ****** ****** *)
 
 fn clear_screen(): void = clear_row(0) where {
-  fun clear_col{m:nat; m < scr_width}.<scr_width-m>.(r: intLt(scr_height), c: int(m)):<cloref1> void =
-    if c < SCR_WIDTH then matrixref_set_at_int(scr, r, SCR_WIDTH, c, 0)
+  fun clear_col{m:nat | m <= scr_width}.<scr_width-m>.
+  (r: intBtw(0, scr_height), c: int(m)): void =
+      if c < SCR_WIDTH then (
+        matrixref_set_at_int(scr, r, SCR_WIDTH, c, 0);
+        clear_col(r, succ(c))
+      )
 
-  fun clear_row{n:nat; n < scr_height}.<scr_height-n>.(r: int(n)):<cloref1> void =
-    if r < SCR_HEIGHT then clear_col(r, 0)
+  fun clear_row{n:nat; n <= scr_height}.<scr_height-n>.(r: int(n)): void =
+    if r < SCR_HEIGHT then (
+      clear_col(r, 0);
+      clear_row(succ(r))
+    )
 }
 
 (* ****** ****** *)
 
 fn load_font(): void = aux(0) where {
-  fun aux{m:nat; m <= num_chars}(i: int(m)):<cloref1> void =
-    if i < NUM_CHARS then (memory[i] := i2byte(chip8_font[i]); aux(succ(i)))
+  fun aux{m:nat; m <= num_chars}.<num_chars-m>.(i: int(m)): void =
+    if i < NUM_CHARS then (memory[i] := i2b(chip8_font[i]); aux(succ(i)))
 }
-
-(* ****** ****** *)
-
-fn init_mem(): void =
-  begin
-    !pc := PC_START;
-    !I := i2w(0);
-
-    clear_array<byte>(memory, i2byte(0), 4096);
-    clear_array<byte>(V, i2byte(0), NUM_REGS);
-    clear_array<bool>(keys, false, NUM_KEYS);
-    clear_screen();
-
-    !stack := nil;
-
-    !delay_timer := i2u(0);
-    !sound_timer := i2u(0);
-
-    // load_font()
-  end
 
 (* End of [memory.dats] *)

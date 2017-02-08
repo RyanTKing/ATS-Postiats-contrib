@@ -21,7 +21,8 @@ val draw_cnt = ref<int>(0) : ref(int)
 (* ****** ****** *)
 
 fn display(window: !SDL_Window_ptr1): void = if !draw_cnt > 0 then () where {
-  fun draw_x{r,c:nat; r <= SCR_HEIGHT; c <= SCR_WIDTH}(screen: !SDL_Surface_ptr1, x: int(c), y: int(r)): void =
+  fun draw_x{c:nat; c <= scr_width}.<scr_width-c>.
+  (screen: !SDL_Surface_ptr1, x: int(c), y: intBtw(0,scr_height)): void =
     if x < SCR_WIDTH then () where {
       val () = assertloc(y < SCR_HEIGHT)
       val col = if matrixref_get_at_int(scr, y, SCR_WIDTH, x) = 1 then i2u(0xFFFFFF) else i2u(0x000000)
@@ -32,7 +33,8 @@ fn display(window: !SDL_Window_ptr1): void = if !draw_cnt > 0 then () where {
       val () = draw_x(screen, succ(x), y)
     }
 
-  fun draw_y{r:nat; r <= SCR_HEIGHT}(screen: !SDL_Surface_ptr1, y: int(r)): void =
+  fun draw_y{r:nat; r <= scr_height}
+  (screen: !SDL_Surface_ptr1, y: int(r)): void =
     if y < SCR_HEIGHT then (draw_x(screen, 0, y); draw_y(screen, succ(y)))
 
   val (fpf | screen) = SDL_GetWindowSurface(window)

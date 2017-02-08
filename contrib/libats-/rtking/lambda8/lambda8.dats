@@ -46,7 +46,7 @@ fn load_game(game_fname: string): void = () where {
   fun load{n:nat}(game_data: list_vt(char, n), i: intLt(n)): void =
     case+ game_data of
       | ~nil_vt() => ()
-      | ~cons_vt(b, rest) => (memory[i] := c2byte b; load(rest, succ i))
+      | ~cons_vt(c, rest) => (memory[i] := c2c8b(c); load(rest, succ(i)))
 
   val game_opt = fileref_open_opt(game_fname, file_mode_r)
   val () = if option_vt_is_none(game_opt) then $raise GameNotFound(game_fname)
@@ -59,32 +59,41 @@ fn load_game(game_fname: string): void = () where {
 
 (* ****** ****** *)
 
-fn fetch{n,m:nat | n < mem_size}(): word = to_word(low, high) where {
-  val low = memory[!pc] : byte
-  val high = memory[succ(!pc)]
+fn fetch(): c8_word = (high lsl 16) lor low where {
+  val high = b2w(memory[!pc]) : c8_word
+  val low = b2w(memory[succ(!pc)]) : c8_word
 }
 
 (* ****** ****** *)
 
-#define FIRST(w) w2ui((w land 0xF000) lsr 12)
-#define LAST(w)  w2ui(w land 0x000F)
-#define LAST2(w) w2ui(w land 0x00FF)
-#define NNN(w)   w2i(w land 0x0FFF)
-#define NN(w)    w2byte(w land 0x00FF)
-#define VX(w)    w2i((w land 0x0F00) lsr 8)
-#define VY(w)    w2i((w land 0x00F0) lsr 4)
-#define N(w)     w2byte(w land 0x000F)
+fn decode(opcode: c8_word): Opcode =
+  let
+    fn word_to_addr(w: c8_word): c8_addr =
+      if w >= MEM_SIZE then $raise IllegalMemoryAddress(w)
+      else c8w2c8a(w)
 
-fn decode(opcode: word): Opcode =
-  case+ 0 of
-    | _ when FIRST(opcode) = 0x0 => (
-      case+ 0 of
-        | _ when LAST2(opcode) = 0xE0 =>  OP00E0()
-        | _ when LAST2(opcode) = 0xEE =>  OP00EE()
-        | _                           =>> OP0NNN(NNN(opcode)))
-    | _ when FIRST(opcode) = 0x0 =>  OP0NNN(NNN(opcode))
-    | _ when FIRST(opcode) = 0x1 =>  OP1NNN(NNN(opcode))
-    | _ when FIRST(opcode) = 0x2 =>  OP2NNN(NNN(opcode))
+    fn word_to_reg(w: c8_word): c8_reg =
+      if w >= NUM_REGS then $raise IllegalRegister(w)
+      else c8w2c8r(w)
+
+    macdef FIRST(w) = ((,(w) land w000F) lsr 12)
+    macdef LAST(w) = (,(w) land w000F)
+    macdef LAST2(w) = (,(w) land w00FF)
+    macdef NNN(w) = word_to_addr(,(w) land w0FFF)
+    macdef NN(w) = (,(w) land w00FF)
+    macdef VX(w) = word_to_reg((,(w) land w0F00) lsr 8)
+    macdef VY(w) = word_to_reg((,(w) land w00F0) lsr 4)
+    macdef N(w) = (,(w) land w000F)
+  in
+    case+ 0 of
+      | _ when FIRST(opcode) = 0x0 => (
+        case+ 0 of
+          | _ when LAST2(opcode) = 0xE0 =>  OP00E0()
+          | _ when LAST2(opcode) = 0xEE =>  OP00EE()
+          | _                           =>> OP0NNN(NNN(opcode)))
+      | _ when FIRST(opcode) = 0x0 =>  OP0NNN(NNN(opcode))
+      | _ when FIRST(opcode) = 0x1 =>  OP1NNN(NNN(opcode))
+      | _ when FIRST(opcode) = 0x2 =>  OP2NNN(NNN(opcode))
     | _ when FIRST(opcode) = 0x3 =>  OP3XNN(VX(opcode), NN(opcode))
     | _ when FIRST(opcode) = 0x4 =>  OP4XNN(VX(opcode), NN(opcode))
     | _ when FIRST(opcode) = 0x5 =>  OP5XY0(VX(opcode), VY(opcode))
@@ -128,8 +137,21 @@ fn decode(opcode: word): Opcode =
         | _ when LAST2(opcode) = 0x65 => OPFX65(VX(opcode))
         | _                           =>> $raise UnknownOpcode(opcode))
     | _                             =>> $raise UnknownOpcode(opcode)
+  end
 
 (* ****** ****** *)
+
+fn add_c8_byte_c8_addr(b: c8_byte, a: c8_addr): c8_addr =
+  let
+    val w1 = b2w(b)
+    val w2 = c8a2c8w(a)
+    val sum = w1 + w2
+    val () = if sum >= MEM_SIZE then $raise IllegalMemoryAddress(sum)
+   in
+    c8w2c8a(sum)
+   end
+
+overload + with add_c8_byte_c8_addr
 
 fn execute(opcode: Opcode): void =
   let
@@ -142,13 +164,19 @@ fn execute(opcode: Opcode): void =
         if !delay_timer > 0 then !delay_timer := pred !delay_timer;
         !dec_timers := false
       end
+
+    macdef VF_toggle(b) = if (,(b)) then V[0xF] := b1 else V[0xF] := b0
+
+    fn get_reg(i: int): c8_reg =
+      if i >= NUM_REGS then $raise IllegalRegister(i)
+      else i2c8r(i)
   in
     case+ opcode of
       | OP0NNN(nnn)     => println!("Calls RCA 1802 program at address ", nnn)
       | OP00E0()        => (
           clear_screen();
           !draw_cnt := succ !draw_cnt;
-          incr_pc false
+          incr_pc(false)
         )
       | OP00EE()        => (
           case+ !stack of
@@ -162,85 +190,76 @@ fn execute(opcode: Opcode): void =
       | OP3XNN(x, nn)   => incr_pc(V[x] = nn)
       | OP4XNN(x, nn)   => incr_pc(V[x] != nn)
       | OP5XY0(x, y)    => incr_pc(V[x] = V[y])
-      | OP6XNN(x, nn)   => (V[x] := nn; incr_pc false)
-      | OP7XNN(x, nn)   => (V[x] := V[x] + nn; incr_pc false)
-      | OP8XY0(x, y)    => (V[x] := V[y]; incr_pc false)
-      | OP8XY1(x, y)    => (V[x] := V[x] lor V[y]; incr_pc false)
-      | OP8XY2(x, y)    => (V[x] := V[x] land V[y]; incr_pc false)
-      | OP8XY3(x, y)    => (V[x] := V[x] lxor V[y]; incr_pc false)
+      | OP6XNN(x, nn)   => (V[x] := nn; incr_pc(false))
+      | OP7XNN(x, nn)   => (V[x] := V[x] + nn; incr_pc(false))
+      | OP8XY0(x, y)    => (V[x] := V[y]; incr_pc(false))
+      | OP8XY1(x, y)    => (V[x] := V[x] lor V[y]; incr_pc(false))
+      | OP8XY2(x, y)    => (V[x] := V[x] land V[y]; incr_pc(false))
+      | OP8XY3(x, y)    => (V[x] := V[x] lxor V[y]; incr_pc(false))
       | OP8XY4(x, y)    => (
-          V[0xF] := (
-            if V[x] > (i2byte 0xFF - V[y]) then i2byte 1 else i2byte 0
-          );
+          VF_toggle(V[x] > (w00FF - V[y]));
           V[x] := V[x] + V[y];
-          incr_pc false
+          incr_pc(false)
         )
       | OP8XY5(x, y)    => (
-          V[0xF] := (if V[x] > V[y] then i2byte 1 else i2byte 0);
+          VF_toggle(V[x] > V[y]);
           V[x] := V[x] - V[y];
-          incr_pc false
+          incr_pc(false)
         )
       | OP8XY6(x, y)    => (
-          V[0xF] := V[x] land i2byte 0x1;
+          V[0xF] := V[x] land b1;
           V[x] := V[x] lsr 1;
-          incr_pc false
+          incr_pc(false)
         )
       | OP8XY7(x, y)    => (
-          V[0xF] := (if V[y] > V[x] then i2byte 1 else i2byte 0);
+          VF_toggle(V[y] > V[x]);
           V[x] := V[y] - V[x];
-          incr_pc false
+          incr_pc(false)
         )
       | OP8XYE(x, y)    => (
-        V[0xF] := (V[x] lsr 7) land i2byte 0x1;
+        V[0xF] := (V[x] lsr 7) land b1;
         V[x] := V[x] lsl 1;
-        incr_pc false
+        incr_pc(false)
       )
       | OP9XY0(x, y)    => incr_pc(V[x] != V[y])
-      | OPANNN(nnn)     => (!I := nnn; incr_pc false)
-      | OPBNNN(nnn)     => (!pc := byte2uint0 V[0] + nnn)
+      | OPANNN(nnn)     => (!I := nnn; incr_pc(false))
+      | OPBNNN(nnn)     => (!pc := V[0] + nnn)
       | OPCXNN(x, nn)   => (
-          V[x] := (i2byte(rand() % 256) land nn);
-          incr_pc false
+          V[x] := (i2b(rand() % 256) land nn);
+          incr_pc(false)
         )
       | OPDXYN(x, y, n) => println!("Draws a 8xn sprite at (V[", x, "], V[", y, "])")
       | OPEX9E(x)       => println!("Skips next instruction if key stored at V[", x, "] is pressed")
       | OPEXA1(x)       => println!("Skips next instruction if key stored at V[", x, "] isn't pressed")
-      | OPFX07(x)       => (V[x] := i2byte !delay_timer; incr_pc false)
+      | OPFX07(x)       => (V[x] := i2b(!delay_timer); incr_pc(false))
       | OPFX0A(x)       => println!("A key press is awaited then stored in V[", x, "]")
-      | OPFX15(x)       => (!delay_timer := byte2int0 V[x]; incr_pc false)
-      | OPFX18(x)       => (!sound_timer := byte2int0 V[x]; incr_pc false)
+      | OPFX15(x)       => (!delay_timer := b2i(V[x]); incr_pc(false))
+      | OPFX18(x)       => (!sound_timer := b2i(V[x]); incr_pc(false))
       | OPFX1E(x)       => (
-          V[0xF] := (
-            if (!I + byte2uint0 V[x]) > 0xFFF then i2byte 1 else i2byte 0
-          );
-          !I := (!I + byte2uint0 V[x]) land i2u 0xFFF;
-          incr_pc false
+          !I := V[x] + !I;
+          incr_pc(false)
         )
-      | OPFX29(x)       => (!I := byte2uint0 V[x] * i2u 5; incr_pc false)
+      | OPFX29(x)       => (!I := c8b2c8a(V[x] * i2b(5)); incr_pc(false))
       | OPFX33(x)       => (
-          memory[!I] := V[x] / i2byte 100;
-          memory[!I] := (V[x] % i2byte 100) / i2byte 10;
-          memory[!I] := V[x] % i2byte 10
+          memory[!I] := V[x] / i2b(100);
+          memory[!I] := (V[x] % i2b(100)) / i2b(10);
+          memory[!I] := V[x] % i2b(10)
         )
-      | OPFX55(x)       =>
-        let
-          fun store(i: int, n: uint):<cloref1> void =
-            if i2byte n <= V[x] then
-              (memory[i] := V[n]; store(i + 1, n + i2u 1))
-          val () = store(w2i(!I), i2u 0)
-        in
-          incr_pc false
-        end
+      | OPFX55(x)       => (incr_pc(false); store(!I, 0)) where {
+          fun store(a: c8_addr, n: int):<cloref1> void =
+            if i2b(n) <= V[x] then (
+              memory[a] := V[get_reg(n)];
+              store(succ(a), n + 1)
+            )
+        }
 
-      | OPFX65(x)       =>
-        let
-          fun fill(I: word, n: uint):<cloref1> void =
-            if i2byte n <= V[x] then
-              (V[n] := memory[w2i I]; fill(i2w(w2i(I) + 1), n + i2u(1)))
-          val () = fill(!I, i2u 0)
-        in
-          incr_pc false
-        end
+      | OPFX65(x)       => (incr_pc(false); fill(!I, 0)) where {
+          fun fill(a: c8_addr, n: int):<cloref1> void =
+            if i2b(n) <= V[x] then (
+              V[get_reg(n)] := memory[a];
+              fill(succ(a), n + 1)
+            )
+        }
   end
 
 (* ****** ****** *)
@@ -271,7 +290,7 @@ implement main0(argc, argv) = () where {
       exit(1)
     )
   val () = assertloc(argc = 2)
-  val () = init_mem()
+  val () = load_font()
   val cpu = load_game(argv[1])
   val window = init_disp()
   val () = init_cputimer()
