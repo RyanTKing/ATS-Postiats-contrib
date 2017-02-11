@@ -43,10 +43,13 @@ fn init_cputimer(): void = () where {
 (* ****** ****** *)
 
 fn load_game(game_fname: string): void = () where {
-  fun load{n:nat}(game_data: list_vt(char, n), i: intLt(n)): void =
+  fun load{n:nat}(game_data: list_vt(char, n), i: c8_addr): void =
     case+ game_data of
       | ~nil_vt() => ()
-      | ~cons_vt(c, rest) => (memory[i] := c2c8b(c); load(rest, succ(i)))
+      | ~cons_vt(c, rest) => (
+          memory[i] := c2c8b(c);
+          if i < MEM_SIZE - 1 then load(rest, succ(i)) else free(rest)
+        )
 
   val game_opt = fileref_open_opt(game_fname, file_mode_r)
   val () = if option_vt_is_none(game_opt) then $raise GameNotFound(game_fname)
@@ -60,8 +63,10 @@ fn load_game(game_fname: string): void = () where {
 (* ****** ****** *)
 
 fn fetch(): c8_word = (high lsl 16) lor low where {
+  val high_addr = !pc
+  val low_addr = succ(!pc)
   val high = b2w(memory[!pc]) : c8_word
-  val low = b2w(memory[succ(!pc)]) : c8_word
+  val low = if low_addr >= MEM_SIZE then $raise IllegalPC(!pc) else b2w(memory[low_addr]) : c8_word
 }
 
 (* ****** ****** *)
@@ -73,7 +78,7 @@ fn decode(opcode: c8_word): Opcode =
       else c8w2c8a(w)
 
     fn word_to_reg(w: c8_word): c8_reg =
-      if w >= NUM_REGS then $raise IllegalRegister(w)
+      if w >= NUM_REGS then $raise IllegalRegister(w2i(w))
       else c8w2c8r(w)
 
     macdef FIRST(w) = ((,(w) land w000F) lsr 12)
@@ -231,10 +236,10 @@ fn execute(opcode: Opcode): void =
       | OPDXYN(x, y, n) => println!("Draws a 8xn sprite at (V[", x, "], V[", y, "])")
       | OPEX9E(x)       => println!("Skips next instruction if key stored at V[", x, "] is pressed")
       | OPEXA1(x)       => println!("Skips next instruction if key stored at V[", x, "] isn't pressed")
-      | OPFX07(x)       => (V[x] := i2b(!delay_timer); incr_pc(false))
+      | OPFX07(x)       => (V[x] := !delay_timer; incr_pc(false))
       | OPFX0A(x)       => println!("A key press is awaited then stored in V[", x, "]")
-      | OPFX15(x)       => (!delay_timer := b2i(V[x]); incr_pc(false))
-      | OPFX18(x)       => (!sound_timer := b2i(V[x]); incr_pc(false))
+      | OPFX15(x)       => (!delay_timer := V[x]; incr_pc(false))
+      | OPFX18(x)       => (!sound_timer := V[x]; incr_pc(false))
       | OPFX1E(x)       => (
           !I := V[x] + !I;
           incr_pc(false)

@@ -17,9 +17,6 @@ staload "./lambda8.sats"
 
 (* ****** ****** *)
 
-macdef i2b(i) = g0int2uint<intknd,uint8knd>(,(i))
-macdef b0 = i2b(0)
-
 // 16 CPU Registers
 val V = arrayref_make_elt<c8_byte>(i2sz(NUM_REGS), b0): arrayref(c8_byte, num_regs)
 
@@ -46,10 +43,10 @@ val scr = matrixref_make_elt<int>(
 ) : matrixref(int, scr_height, scr_width)
 
 // Delay  Timer
-val delay_timer = ref<int>(0) : ref(int)
+val delay_timer = ref<c8_byte>(b0) : ref(c8_byte)
 
 // Sound Timer
-val sound_timer = ref<int>(0) : ref(int)
+val sound_timer = ref<c8_byte>(b0) : ref(c8_byte)
 
 // Keys
 val keys = arrayref_make_elt<bool>(
